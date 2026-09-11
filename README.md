@@ -33,14 +33,6 @@ source ~/.bashrc
 ffactory help
 ```
 
-Private repo? Then either make it public, or:
-
-```bash
-git config --global url."ssh://git@github.com/".insteadOf "https://github.com/"
-export GOPRIVATE=github.com/mannumourya/ffactory
-go install github.com/mannumourya/ffactory@latest
-```
-
 ### One-shot without installing
 
 ```bash
@@ -58,10 +50,6 @@ go build -o ffactory .
 
 ---
 
-## Publish this repo so `go install` works
-
-Do this once on the machine that owns the GitHub account. Replace the org/user if yours is not `mannumourya`.
-
 ### 1. Confirm the module path matches the repo
 
 `go.mod` must be exactly:
@@ -71,66 +59,6 @@ module github.com/mannumourya/ffactory
 
 go 1.22
 ```
-
-The main package must live at the **repo root** (this tree). If you nest it under `cmd/ffactory`, people have to install `github.com/mannumourya/ffactory/cmd/ffactory@latest` instead.
-
-### 2. Create the empty GitHub repo
-
-GitHub UI: **New repository** → name `ffactory` → public (required for anonymous `go install`) → do **not** add a README/License (they are already here).
-
-Or:
-
-```bash
-gh repo create mannumourya/ffactory --public --source=. --remote=origin
-```
-
-### 3. First push
-
-From this directory (`scripts/ffactory` in the skill tree, or a copy of it):
-
-```bash
-cd /path/to/ffactory
-git init
-git add go.mod *.go README.md LICENSE .gitignore
-git commit -m "ffactory v0.1.0 — Feature Factory flag scanner"
-git branch -M main
-git remote add origin git@github.com:mannumourya/ffactory.git
-git push -u origin main
-```
-
-Do **not** commit the compiled `ffactory` binary or session JSON.
-
-### 4. Tag a version (this is what `@v0.1.0` resolves)
-
-Go modules want semver tags.
-
-```bash
-git tag -a v0.1.0 -m "ffactory v0.1.0"
-git push origin v0.1.0
-```
-
-Proxy cache: https://pkg.go.dev/github.com/mannumourya/ffactory  
-First `go install` after a new tag can take a few minutes while proxy.golang.org indexes it. Force a fresh fetch with:
-
-```bash
-GOPROXY=direct go install github.com/mannumourya/ffactory@v0.1.0
-```
-
-### 5. Later releases
-
-```bash
-# bump, commit
-git tag -a v0.1.1 -m "ffactory v0.1.1"
-git push origin main --tags
-```
-
-Anyone can then run:
-
-```bash
-go install github.com/mannumourya/ffactory@v0.1.1
-```
-
----
 
 ## Manual
 
@@ -300,7 +228,3 @@ Unauthenticated. A Mail/Docs cookie + `--compare-anon` is the next pass, not ano
 ## Legal
 
 Only run this against hosts you are allowed to test (bug bounty / VDP / written contract). Respect scope, rate limits, and out-of-scope assets (`staging.` is not automatically in scope). Do not commit cookies, session files, or report JSON that contains tokens.
-
-## Credit
-
-Methodology: [Kapeka — Exploiting the Feature Factory](https://kapeka.dev/blog/exploiting-the-feature-factory) ([thread](https://x.com/kapeka0/status/2015371668928000209)).
