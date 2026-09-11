@@ -1,7 +1,5 @@
 # ffactory
 
-Go scanner for [Kapeka's Feature Factory methodology](https://kapeka.dev/blog/exploiting-the-feature-factory).
-
 It finds **hidden features**, **feature-flag SaaS**, **eval/config APIs**, and **sibling products** on a target origin. It accepts a browser session, a bearer token, or it can log in itself.
 
 This is an asset-discovery tool for authorized bug bounty / VDP work. It does not exploit anything. A flag name is not a finding.
