@@ -212,17 +212,6 @@ Isolate one jewel key, then hit every new endpoint as user A, user B, and anon. 
 
 `--user-id` and `--attr` are injected into those eval bodies so targeting rules can fire.
 
-### Live-test notes (2026-09-11)
-
-| Origin | Result |
-|---|---|
-| `https://www.nasa.gov` | Brochure. Widget `disable_*` noise. No platforms. Kill. |
-| `https://www.superhuman.com` | Statsig treatments in `window.ShData`: `sh_go_1_0_launch`, `sh_plans_docs_route`, `csf_consolidated_form` |
-| `https://go.superhuman.com` | `FEATURE_DICTATION`, `FEATURE_NOTETAKER`, Grammarly/Coda staging + `mcp-sandbox.staging.codahosted.io` |
-| `https://mail.superhuman.com` | Follows `page.js` (~11 MB). Hundreds of `TOGGLE_*` keys, LaunchDarkly stream hosts, `admin.superhuman.com` |
-
-Unauthenticated. A Mail/Docs cookie + `--compare-anon` is the next pass, not another homepage scan.
-
 ---
 
 ## Legal
