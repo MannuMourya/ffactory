@@ -186,6 +186,8 @@ func printSummary(r *Report) {
 	fmt.Printf("client_keys     %d\n", len(r.ClientKeys))
 	fmt.Printf("eval_urls       %d\n", len(r.EvalURLs))
 	fmt.Printf("flags           %d\n", len(r.Flags))
+	fmt.Printf("endpoint leads  %d\n", len(r.Endpoints))
+	fmt.Printf("value changes   %d\n", len(r.ValueChanges))
 	fmt.Printf("secondary_hosts %d\n", len(r.SecondaryHosts))
 	fmt.Printf("product_names   %s\n", strings.Join(r.ProductNames, ", "))
 	fmt.Printf("js_bundles      %d\n", len(r.JSBundles))
@@ -226,6 +228,12 @@ func printSummary(r *Report) {
 		}
 		for _, k := range r.AnonOnlyFlags {
 			fmt.Printf("  ANON-ONLY  %s\n", k)
+		}
+	}
+	if len(r.ValueChanges) > 0 {
+		fmt.Println("\nchanged values (observations, not confirmed access)")
+		for _, v := range r.ValueChanges {
+			fmt.Printf("  %s: anon=%s auth=%s\n", v.Key, v.AnonValue, v.AuthValue)
 		}
 	}
 	if len(r.Notes) > 0 {
