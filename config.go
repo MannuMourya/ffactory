@@ -59,6 +59,7 @@ func (h *headerList) Set(v string) error {
 }
 
 type Report struct {
+	Outcome        string              `json:"outcome"`
 	ValueChanges   []ValueChange       `json:"value_changes,omitempty"`
 	Endpoints      []EndpointCandidate `json:"endpoint_candidates,omitempty"`
 	Assets         []Asset             `json:"assets,omitempty"`

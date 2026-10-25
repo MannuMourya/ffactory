@@ -99,6 +99,9 @@ func runScan(args []string) {
 		}
 		fmt.Fprintf(os.Stderr, "\nJSON written to %s\n", cfg.Out)
 	}
+	if code := scanExitCode(rep); code != 0 {
+		os.Exit(code)
+	}
 }
 
 func runLogin(args []string) {
@@ -178,6 +181,15 @@ func writeJSON(path string, v any) error {
 }
 
 func printSummary(r *Report) {
+	if scanExitCode(r) != 0 {
+		fmt.Printf("target          %s\noutcome         %s\nstatus          %d\ntitle           %s\n", r.Target, r.Outcome, r.DocumentStatus, r.Title)
+		for _, note := range r.Notes {
+			fmt.Printf("  - %s\n", note)
+		}
+		return
+	}
+	fmt.Printf("outcome         %s\n", r.Outcome)
+
 	fmt.Printf("target          %s\n", r.Target)
 	fmt.Printf("authenticated   %v\n", r.Authenticated)
 	fmt.Printf("status          %d\n", r.DocumentStatus)
