@@ -300,3 +300,23 @@ imports, template-built endpoints, and dynamically loaded values may be missed.
 SDK-shaped method names can also belong to unrelated objects. Comments and dead
 code can be matched. A difference between passes can reflect experiments, time,
 or personalization rather than a role boundary; repeat before drawing conclusions.
+
+### Blocked or challenged documents
+
+A 403 with a “Just a moment...” page means the server returned a challenge,
+not the application. ffactory uses an HTTP client and does not execute JavaScript
+or solve browser challenges. It cannot claim to have scanned the application in
+that situation, even when the challenge itself returns HTTP 200.
+
+Reports include `outcome`: `completed`, `blocked`, `http_error`, or `empty`.
+Unusable documents are cached for inspection, but are not harvested or followed
+for scripts/probes. The CLI exits with status 1 after writing the requested JSON
+report. It does not print zero-result application findings for a blocked scan.
+If only the anonymous comparison is challenged, the main scan remains completed
+and the report notes that comparison is unavailable.
+
+Confirm that the intended URL is accessible in your browser. A legitimate browser
+session may help with ordinary authentication, but challenge clearance can depend
+on browser execution and connection properties; copying cookies is not a reliable
+solution for this HTTP client. A completed scan also does not mean every runtime
+asset or feature was discoverable statically.

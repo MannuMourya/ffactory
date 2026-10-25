@@ -37,6 +37,10 @@ func Scan(cfg *Config) (*Report, error) {
 			return nil, fmt.Errorf("save session: %w", err)
 		}
 	}
+	if authRep.Outcome != "completed" {
+		authRep.Authenticated = cfg.Cookie != "" || cfg.CookieFile != "" || cfg.Bearer != "" || cfg.Session != "" || cfg.LoginURL != "" || len(cfg.Headers) > 0
+		return authRep, nil
+	}
 	// Compare document/bundle discoveries before adding authenticated API results.
 	documentFlags := append([]Flag(nil), authRep.Flags...)
 	if !cfg.NoProbe {
@@ -77,8 +81,8 @@ func Scan(cfg *Config) (*Report, error) {
 		anonRep, err := scanOnce(anonClient, &anonCfg, false)
 		if err != nil {
 			authRep.Notes = append(authRep.Notes, "anonymous comparison failed: "+err.Error())
-		} else if anonRep.DocumentStatus >= 400 {
-			authRep.Notes = append(authRep.Notes, fmt.Sprintf("anonymous comparison failed: HTTP %d", anonRep.DocumentStatus))
+		} else if anonRep.Outcome != "completed" {
+			authRep.Notes = append(authRep.Notes, fmt.Sprintf("anonymous comparison unavailable: %s (HTTP %d)", anonRep.Outcome, anonRep.DocumentStatus))
 		} else {
 			authRep.AuthOnlyFlags, authRep.AnonOnlyFlags = diffFlags(documentFlags, anonRep.Flags)
 			authRep.ValueChanges = diffValues(documentFlags, anonRep.Flags)
@@ -98,6 +102,12 @@ func scanOnce(c *httpClient, cfg *Config, doProbe bool) (*Report, error) {
 		return nil, err
 	}
 
+	outcome, reason := documentOutcome(status, html)
+	if outcome != "completed" {
+		return &Report{Target: cfg.URL, FinalURL: final, DocumentStatus: status, Title: extractTitle(html), Outcome: outcome,
+			Notes:  []string{reason, "Cached response: " + filepath.Join(cfg.CacheDir, "document.html")},
+			Assets: []Asset{{Source: "document", URL: cfg.URL, FinalURL: final, Status: status}}, ScannedAt: time.Now().UTC()}, nil
+	}
 	acc := newHarvest()
 	harvest(html, "document", acc)
 
@@ -166,6 +176,7 @@ func scanOnce(c *httpClient, cfg *Config, doProbe bool) (*Report, error) {
 	host := baseHost
 	rep := &Report{
 		Target:         cfg.URL,
+		Outcome:        "completed",
 		Endpoints:      endpoints,
 		Assets:         assets,
 		DocumentStatus: status,
