@@ -222,8 +222,8 @@ func probePlatforms(c *httpClient, cfg *Config, acc *harvestAcc) []Probe {
 			continue
 		}
 		payload := map[string]any{
-			"user":             map[string]any{"userID": cfg.UserID},
-			"statsigMetadata":  map[string]any{"sdkType": "js-client", "sdkVersion": "5.0.0"},
+			"user":            map[string]any{"userID": cfg.UserID},
+			"statsigMetadata": map[string]any{"sdkType": "js-client", "sdkVersion": "5.0.0"},
 		}
 		st, body, err := postWithHeader(c, "https://api.statsig.com/v1/initialize", payload, "STATSIG-API-KEY", ck.Key)
 		p := Probe{Platform: "statsig", URL: "https://api.statsig.com/v1/initialize", Status: st}
@@ -281,7 +281,7 @@ func probePlatforms(c *httpClient, cfg *Config, acc *harvestAcc) []Probe {
 			if err != nil {
 				p.Note = err.Error()
 			} else {
-				p.FlagCount = ingestGenericMap(body, acc, "configcat")
+				p.FlagCount = ingestConfigCat(body, acc)
 			}
 			probes = append(probes, p)
 		}
@@ -320,27 +320,29 @@ func posthogBases(acc *harvestAcc) []string {
 
 func getSilent(c *httpClient, raw string) (int, []byte, error) {
 	st, _, body, err := c.get(raw)
+	if err == nil && st >= 400 {
+		err = fmt.Errorf("HTTP %d", st)
+	}
 	return st, body, err
 }
 
 func getWithHeader(c *httpClient, raw, name, val string) (int, []byte, error) {
-	c.headers = append(c.headers, [2]string{name, val})
-	defer func() {
-		if n := len(c.headers); n > 0 {
-			c.headers = c.headers[:n-1]
-		}
-	}()
+	clone := *c
+	c = &clone
+	c.requestHeaders = [][2]string{{name, val}}
+
 	st, _, body, err := c.get(raw)
+	if err == nil && st >= 400 {
+		err = fmt.Errorf("HTTP %d", st)
+	}
 	return st, body, err
 }
 
 func postWithHeader(c *httpClient, raw string, payload any, name, val string) (int, []byte, error) {
-	c.headers = append(c.headers, [2]string{name, val})
-	defer func() {
-		if n := len(c.headers); n > 0 {
-			c.headers = c.headers[:n-1]
-		}
-	}()
+	clone := *c
+	c = &clone
+	c.requestHeaders = [][2]string{{name, val}}
+
 	return c.postJSON(raw, payload)
 }
 
@@ -375,14 +377,14 @@ func ingestLD(body []byte, acc *harvestAcc) int {
 	n := 0
 	for k, v := range raw {
 		val := stringify(v)
-		on := false
+		var on *bool
 		if m, ok := v.(map[string]any); ok {
 			if b, ok := m["value"].(bool); ok {
-				on = b
+				on = &b
 				val = boolStr(b)
 			}
 		}
-		acc.addFlagVal(k, val, "launchdarkly-evalx", &on)
+		acc.addFlagVal(k, val, "launchdarkly-evalx", on)
 		n++
 	}
 	return n
@@ -452,9 +454,15 @@ func ingestPostHog(body []byte, acc *harvestAcc) int {
 
 func ingestOptimizely(body []byte, acc *harvestAcc) int {
 	var wrap struct {
-		Features    []struct{ Key string `json:"key"` }    `json:"features"`
-		Experiments []struct{ Key string `json:"key"` }    `json:"experiments"`
-		FeatureFlags []struct{ Key string `json:"key"` }   `json:"featureFlags"`
+		Features []struct {
+			Key string `json:"key"`
+		} `json:"features"`
+		Experiments []struct {
+			Key string `json:"key"`
+		} `json:"experiments"`
+		FeatureFlags []struct {
+			Key string `json:"key"`
+		} `json:"featureFlags"`
 	}
 	if json.Unmarshal(body, &wrap) != nil {
 		return 0
@@ -486,4 +494,17 @@ func ingestGenericMap(body []byte, acc *harvestAcc, source string) int {
 		n++
 	}
 	return n
+}
+
+func ingestConfigCat(body []byte, acc *harvestAcc) int {
+	var raw struct {
+		Flags map[string]any `json:"f"`
+	}
+	if json.Unmarshal(body, &raw) != nil {
+		return 0
+	}
+	for k, v := range raw.Flags {
+		acc.addFlag(k, stringify(v), "configcat")
+	}
+	return len(raw.Flags)
 }
