@@ -6,12 +6,16 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
 
 func Scan(cfg *Config) (*Report, error) {
-	if err := os.MkdirAll(cfg.CacheDir, 0o755); err != nil {
+	if cfg.JSLimit < 0 {
+		return nil, fmt.Errorf("js-limit must not be negative")
+	}
+	if err := os.MkdirAll(cfg.CacheDir, 0o700); err != nil {
 		return nil, err
 	}
 	c, err := newClient(cfg)
@@ -23,15 +27,32 @@ func Scan(cfg *Config) (*Report, error) {
 			return nil, fmt.Errorf("login: %w", err)
 		}
 	}
-	if cfg.SaveSession != "" {
-		_ = c.saveSession(cfg.SaveSession)
-	}
-
-	authRep, err := scanOnce(c, cfg, true)
+	authRep, err := scanOnce(c, cfg, false)
 	if err != nil {
 		return nil, err
 	}
 
+	if cfg.SaveSession != "" {
+		if err := c.saveSession(cfg.SaveSession); err != nil {
+			return nil, fmt.Errorf("save session: %w", err)
+		}
+	}
+	// Compare document/bundle discoveries before adding authenticated API results.
+	documentFlags := append([]Flag(nil), authRep.Flags...)
+	if !cfg.NoProbe {
+		acc := newHarvest()
+		for _, f := range authRep.Flags {
+			acc.flags[f.Key] = f
+		}
+		for _, k := range authRep.ClientKeys {
+			acc.addKey(k.Platform, k.Key, k.Source)
+		}
+		for _, e := range authRep.EvalURLs {
+			acc.addEval(e.Platform, e.URL, e.Source)
+		}
+		authRep.ProbeResults = probePlatforms(c, cfg, acc)
+		authRep.Flags = acc.sortedFlags()
+	}
 	authed := cfg.Cookie != "" || cfg.CookieFile != "" || cfg.Bearer != "" ||
 		cfg.Session != "" || cfg.LoginURL != "" || len(cfg.Headers) > 0
 	authRep.Authenticated = authed
@@ -45,12 +66,22 @@ func Scan(cfg *Config) (*Report, error) {
 		anonCfg.LoginURL = ""
 		anonCfg.Headers = nil
 		anonCfg.SaveSession = ""
+		anonCfg.CacheDir = filepath.Join(cfg.CacheDir, "anon")
+		if err := os.MkdirAll(anonCfg.CacheDir, 0o700); err != nil {
+			return nil, err
+		}
 		anonClient, err := newClient(&anonCfg)
-		if err == nil {
-			if anonRep, err := scanOnce(anonClient, &anonCfg, false); err == nil {
-				authRep.AuthOnlyFlags, authRep.AnonOnlyFlags = diffFlags(authRep.Flags, anonRep.Flags)
-				authRep.Notes = append(authRep.Notes, fmt.Sprintf("anon compare: %d auth-only, %d anon-only", len(authRep.AuthOnlyFlags), len(authRep.AnonOnlyFlags)))
-			}
+		if err != nil {
+			return nil, err
+		}
+		anonRep, err := scanOnce(anonClient, &anonCfg, false)
+		if err != nil {
+			authRep.Notes = append(authRep.Notes, "anonymous comparison failed: "+err.Error())
+		} else if anonRep.DocumentStatus >= 400 {
+			authRep.Notes = append(authRep.Notes, fmt.Sprintf("anonymous comparison failed: HTTP %d", anonRep.DocumentStatus))
+		} else {
+			authRep.AuthOnlyFlags, authRep.AnonOnlyFlags = diffFlags(documentFlags, anonRep.Flags)
+			authRep.Notes = append(authRep.Notes, fmt.Sprintf("anon compare: %d auth-only, %d anon-only", len(authRep.AuthOnlyFlags), len(authRep.AnonOnlyFlags)))
 		}
 	}
 	return authRep, nil
@@ -62,7 +93,9 @@ func scanOnce(c *httpClient, cfg *Config, doProbe bool) (*Report, error) {
 		return nil, fmt.Errorf("fetch document: %w", err)
 	}
 	html := string(body)
-	_ = os.WriteFile(filepath.Join(cfg.CacheDir, "document.html"), body, 0o644)
+	if err := writePrivate(filepath.Join(cfg.CacheDir, "document.html"), body); err != nil {
+		return nil, err
+	}
 
 	acc := newHarvest()
 	harvest(html, "document", acc)
@@ -79,13 +112,12 @@ func scanOnce(c *httpClient, cfg *Config, doProbe bool) (*Report, error) {
 
 	var fetched []string
 	limit := cfg.JSLimit
-	if limit <= 0 {
-		limit = 30
-	}
+
 	n := 0
+	attempts := 0
 	queue := append([]string{}, scripts...)
 	seenJS := map[string]struct{}{}
-	for len(queue) > 0 && n < limit {
+	for len(queue) > 0 && attempts < limit {
 		src := queue[0]
 		queue = queue[1:]
 		if _, ok := seenJS[src]; ok {
@@ -95,23 +127,26 @@ func scanOnce(c *httpClient, cfg *Config, doProbe bool) (*Report, error) {
 		if !firstParty(src, baseHost) && n > 8 && !maybeFlagSDK(src) {
 			continue
 		}
-		st, _, js, err := c.get(src)
+		attempts++
+		st, finalJS, js, err := c.get(src)
 		if err != nil || st >= 400 || len(js) == 0 {
 			continue
 		}
 		name := fmt.Sprintf("js-%02d.js", n)
-		_ = os.WriteFile(filepath.Join(cfg.CacheDir, name), js, 0o644)
+		if err := writePrivate(filepath.Join(cfg.CacheDir, name), js); err != nil {
+			return nil, err
+		}
 		txt := string(js)
 		harvest(txt, name, acc)
 		fetched = append(fetched, src)
 		n++
 		// loaders often point at the real bundle (pageJs, import(), webpack)
-		for _, extra := range extractScriptSrcs(txt, src) {
+		for _, extra := range extractScriptSrcs(txt, finalJS) {
 			if _, ok := seenJS[extra]; !ok {
 				queue = append(queue, extra)
 			}
 		}
-		for _, extra := range extractQuotedJS(txt, src) {
+		for _, extra := range extractQuotedJS(txt, finalJS) {
 			if _, ok := seenJS[extra]; !ok {
 				queue = append(queue, extra)
 			}
@@ -170,7 +205,7 @@ func extractQuotedJS(text, pageURL string) []string {
 	var out []string
 	for _, m := range re.FindAllStringSubmatch(text, -1) {
 		raw := m[1]
-		if strings.HasPrefix(raw, "http") || strings.HasPrefix(raw, "/") || strings.HasPrefix(raw, "~") {
+		if !strings.HasPrefix(raw, "~") {
 			u := raw
 			if base != nil {
 				if ref, err := base.Parse(raw); err == nil {
@@ -219,5 +254,7 @@ func diffFlags(auth, anon []Flag) (authOnly, anonOnly []string) {
 			anonOnly = append(anonOnly, k)
 		}
 	}
+	sort.Strings(authOnly)
+	sort.Strings(anonOnly)
 	return authOnly, anonOnly
 }

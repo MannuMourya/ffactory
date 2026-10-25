@@ -15,15 +15,18 @@ import (
 )
 
 type httpClient struct {
-	http    *http.Client
-	headers [][2]string
-	base    *url.URL
+	http           *http.Client
+	headers        [][2]string
+	base           *url.URL
+	requestHeaders [][2]string
 }
 
 type sessionFile struct {
-	Cookies []savedCookie  `json:"cookies"`
-	Headers [][2]string    `json:"headers"`
-	Bearer  string         `json:"bearer,omitempty"`
+	Cookies       []savedCookie  `json:"cookies"`
+	Headers       [][2]string    `json:"headers"`
+	Origin        string         `json:"origin,omitempty"`
+	CookieRecords []cookieRecord `json:"cookie_records,omitempty"`
+	Bearer        string         `json:"bearer,omitempty"`
 }
 
 type savedCookie struct {
@@ -47,31 +50,46 @@ func newClient(cfg *Config) (*httpClient, error) {
 	}
 	c := &httpClient{
 		http: &http.Client{
-			Jar:     jar,
-			Timeout: time.Duration(cfg.TimeoutSec) * time.Second,
+			Jar:       &recordingJar{CookieJar: jar},
+			Timeout:   time.Duration(cfg.TimeoutSec) * time.Second,
 			Transport: tr,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
 				if len(via) >= 10 {
 					return fmt.Errorf("too many redirects")
 				}
+				if !sameOrigin(req.URL, via[0].URL) {
+					for name := range via[0].Header {
+						req.Header.Del(name)
+					}
+				}
 				return nil
 			},
 		},
-		headers: append([][2]string{}, cfg.Headers...),
+		headers: nil,
 	}
-	if cfg.Bearer != "" {
-		c.headers = append(c.headers, [2]string{"Authorization", "Bearer " + cfg.Bearer})
+	baseURL := cfg.URL
+	if baseURL == "" {
+		baseURL = cfg.LoginURL
 	}
-	if cfg.URL != "" {
-		u, err := url.Parse(cfg.URL)
-		if err == nil {
-			c.base = u
+	if baseURL != "" {
+		u, err := url.Parse(baseURL)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+			return nil, fmt.Errorf("expected an absolute HTTP(S) URL")
 		}
+		c.base = u
+	}
+	if cfg.TimeoutSec <= 0 {
+		return nil, fmt.Errorf("timeout must be positive")
 	}
 	if cfg.Session != "" {
 		if err := c.loadSession(cfg.Session); err != nil {
 			return nil, fmt.Errorf("load session: %w", err)
 		}
+	}
+	// Explicit command-line credentials override saved headers.
+	c.headers = append(c.headers, cfg.Headers...)
+	if cfg.Bearer != "" {
+		c.headers = append(c.headers, [2]string{"Authorization", "Bearer " + cfg.Bearer})
 	}
 	if cfg.CookieFile != "" {
 		b, err := os.ReadFile(cfg.CookieFile)
@@ -88,7 +106,7 @@ func newClient(cfg *Config) (*httpClient, error) {
 
 func (c *httpClient) setCookieHeader(u *url.URL, raw string) {
 	var cookies []*http.Cookie
-	for _, part := range strings.Split(raw, ";") {
+	for _, part := range strings.FieldsFunc(raw, func(r rune) bool { return r == ';' || r == '\n' || r == '\r' }) {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
@@ -101,7 +119,7 @@ func (c *httpClient) setCookieHeader(u *url.URL, raw string) {
 			Name:   strings.TrimSpace(name),
 			Value:  strings.TrimSpace(val),
 			Path:   "/",
-			Domain: u.Hostname(),
+			Secure: u.Scheme == "https",
 		})
 	}
 	c.http.Jar.SetCookies(u, cookies)
@@ -111,7 +129,18 @@ func (c *httpClient) doLogin(cfg *Config) error {
 	var body io.Reader
 	ctype := ""
 	if cfg.LoginJSON != "" {
-		body = strings.NewReader(cfg.LoginJSON)
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(cfg.LoginJSON), &payload); err != nil || payload == nil {
+			return fmt.Errorf("login-json must be a JSON object")
+		}
+		for _, kv := range cfg.LoginExtra {
+			payload[kv[0]] = kv[1]
+		}
+		data, err := json.Marshal(payload)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(data)
 		ctype = "application/json"
 	} else if cfg.LoginUser != "" || cfg.LoginPass != "" {
 		form := url.Values{}
@@ -144,7 +173,10 @@ func (c *httpClient) doLogin(cfg *Config) error {
 		return err
 	}
 	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return err
+	}
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("login HTTP %d: %s", resp.StatusCode, truncate(string(b), 200))
 	}
@@ -201,11 +233,19 @@ func (c *httpClient) postJSON(rawURL string, payload any) (status int, body []by
 	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	if err == nil && resp.StatusCode >= 400 {
+		err = fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
 	return resp.StatusCode, b, err
 }
 
 func (c *httpClient) applyHeaders(req *http.Request) {
-	for _, h := range c.headers {
+	if sameOrigin(req.URL, c.base) {
+		for _, h := range c.headers {
+			req.Header.Set(h[0], h[1])
+		}
+	}
+	for _, h := range c.requestHeaders {
 		req.Header.Set(h[0], h[1])
 	}
 }
@@ -220,20 +260,16 @@ func (c *httpClient) cookieCount() int {
 func (c *httpClient) saveSession(path string) error {
 	sf := sessionFile{Headers: c.headers}
 	if c.base != nil {
-		for _, ck := range c.http.Jar.Cookies(c.base) {
-			sf.Cookies = append(sf.Cookies, savedCookie{
-				Name:   ck.Name,
-				Value:  ck.Value,
-				Domain: c.base.Hostname(),
-				Path:   "/",
-			})
-		}
+		sf.Origin = c.base.Scheme + "://" + c.base.Host
+	}
+	if jar, ok := c.http.Jar.(*recordingJar); ok {
+		sf.CookieRecords = jar.records
 	}
 	b, err := json.MarshalIndent(sf, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o600)
+	return writePrivate(path, b)
 }
 
 func (c *httpClient) loadSession(path string) error {
@@ -244,6 +280,19 @@ func (c *httpClient) loadSession(path string) error {
 	var sf sessionFile
 	if err := json.Unmarshal(b, &sf); err != nil {
 		return err
+	}
+	if sf.Origin != "" {
+		origin, err := url.Parse(sf.Origin)
+		if err != nil || !sameOrigin(origin, c.base) {
+			return fmt.Errorf("session belongs to a different origin")
+		}
+	}
+	for _, record := range sf.CookieRecords {
+		u, err := url.Parse(record.URL)
+		if err != nil || u.Host == "" {
+			return fmt.Errorf("invalid session cookie origin")
+		}
+		c.http.Jar.SetCookies(u, record.Cookies)
 	}
 	if len(sf.Headers) > 0 {
 		c.headers = append(c.headers, sf.Headers...)
@@ -290,4 +339,48 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// Scope supplied credentials to an exact origin, including scheme and port.
+func sameOrigin(a, b *url.URL) bool {
+	return a != nil && b != nil && strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
+}
+
+type cookieRecord struct {
+	URL     string         `json:"url"`
+	Cookies []*http.Cookie `json:"cookies"`
+}
+
+type recordingJar struct {
+	http.CookieJar
+	records []cookieRecord
+}
+
+func (j *recordingJar) SetCookies(u *url.URL, cookies []*http.Cookie) {
+	j.CookieJar.SetCookies(u, cookies)
+	copies := make([]*http.Cookie, 0, len(cookies))
+	for _, c := range cookies {
+		copy := *c
+		if copy.MaxAge > 0 {
+			copy.Expires = time.Now().Add(time.Duration(copy.MaxAge) * time.Second)
+			copy.MaxAge = 0
+		}
+		copies = append(copies, &copy)
+	}
+	j.records = append(j.records, cookieRecord{URL: u.String(), Cookies: copies})
+}
+
+func writePrivate(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := f.Chmod(0o600); err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	return f.Close()
 }

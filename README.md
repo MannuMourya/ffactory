@@ -202,7 +202,7 @@ Isolate one jewel key, then hit every new endpoint as user A, user B, and anon. 
 |---|---|---|
 | LaunchDarkly | client-side id, `*.launchdarkly.com` | `evalx/{id}/contexts/{b64}` |
 | GrowthBook | `sdk-…`, `cdn.growthbook.io` | `/api/features/{key}`, `/api/eval/{key}` |
-| Unleash | host + `/api/frontend` | listed URL |
+| Unleash | host + `/api/frontend` | discovery only |
 | Flagsmith | env key | `/api/v1/identities/?identifier=` |
 | Statsig | `client-` key ≥ 20 chars | `/v1/initialize` |
 | Optimizely | datafile URL | GET datafile |
@@ -210,10 +210,48 @@ Isolate one jewel key, then hit every new endpoint as user A, user B, and anon. 
 | PostHog | `phc_…` | `/decide/?v=3` |
 | Homegrown | `window.ShData`, `__NEXT_DATA__`, `FEATURE_*` | none (proxy flip) |
 
-`--user-id` and `--attr` are injected into those eval bodies so targeting rules can fire.
+`--user-id` is used by the implemented identity probes. Generic `--attr` targeting is currently supported by GrowthBook and LaunchDarkly only.
 
 ---
 
 ## Legal
 
 Only run this against hosts you are allowed to test (bug bounty / VDP / written contract). Respect scope, rate limits, and out-of-scope assets (`staging.` is not automatically in scope). Do not commit cookies, session files, or report JSON that contains tokens.
+
+## Validation and credential handling
+
+Run the local regression suite with:
+
+```bash
+go test -race -cover ./...
+go vet ./...
+go build ./...
+```
+
+Tests use local HTTP fixtures, including login/session reload, credential isolation,
+authenticated/anonymous comparisons, script limits, extraction, and API error responses.
+They do not certify compatibility with every live provider or a target's login flow.
+
+Supplied headers (including bearer tokens and raw Cookie headers) are sent only to
+the exact target origin. Cross-origin redirects strip supplied headers; provider
+API keys are scoped to their individual request. Cookie-jar cookies follow normal
+cookie domain/path rules. Login-only mode uses the login URL as its session origin.
+New saved sessions retain cookie paths, secure/expiry attributes, and the originating
+URL, and reject reuse against a different origin. Explicit CLI headers override saved
+headers. Legacy sessions lack origin metadata; regenerate them with this version.
+
+Session files, reports, and cached responses are written with owner-only permissions.
+The anonymous cache is stored in `CACHE_DIR/anon/`; it does not replace the authenticated
+cache. Comparison uses document/bundle flag keys on both sides, excluding provider
+probe results. `authenticated` indicates that credentials/login were supplied; it is
+not proof that the server accepted them. A successful login HTTP response likewise
+does not guarantee an authenticated application session.
+
+`--js-limit 0` disables bundle fetching; the limit counts attempted bundle requests,
+including failures. Save/cache errors are reported instead of silently ignored.
+
+Provider limitations: Unleash and Split currently support discovery only; Unleash
+frontend probing is not implemented. ConfigCat parses v6 `f` settings maps.
+Generic targeting attributes are currently used by GrowthBook and LaunchDarkly;
+other provider targeting support is incomplete. Self-hosted/region-specific APIs
+may need additional endpoint configuration.

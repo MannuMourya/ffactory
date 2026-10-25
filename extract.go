@@ -85,6 +85,7 @@ func extractScriptSrcs(html, pageURL string) []string {
 }
 
 func harvest(text, source string, acc *harvestAcc) {
+	detectPlatformsInText(text, acc)
 	acc.addURLs(reAbsURL.FindAllString(text, -1), source)
 	for _, m := range reLDID.FindAllStringSubmatch(text, -1) {
 		acc.addKey("launchdarkly", m[1], source)
@@ -94,7 +95,7 @@ func harvest(text, source string, acc *harvestAcc) {
 		if m[1] != "" {
 			k = m[1]
 		}
-		if strings.Contains(strings.ToLower(k), "growthbook") || strings.HasPrefix(k, "sdk-") {
+		if m[1] != "" || strings.HasPrefix(k, "sdk-") {
 			acc.addKey("growthbook", k, source)
 		}
 	}
@@ -238,7 +239,15 @@ func walkJSONFlags(v any, source string, acc *harvestAcc) {
 			}
 			if lk == "features" || lk == "featureflags" || lk == "flags" || lk == "toggles" ||
 				lk == "feature_flags" || lk == "editorfeatures" {
-				walkJSONFlags(val, source+":"+k, acc)
+				if flags, ok := val.(map[string]any); ok {
+					for name, value := range flags {
+						var on *bool
+						if b, ok := value.(bool); ok {
+							on = &b
+						}
+						acc.addFlagVal(name, stringify(value), source+":"+k, on)
+					}
+				}
 			}
 			switch cv := val.(type) {
 			case bool:
@@ -415,6 +424,7 @@ func (h *harvestAcc) addFlagVal(key, val, source string, on *bool) {
 		if existing.Value == "" && val != "" {
 			existing.Value = val
 			existing.On = on
+			existing.Source = source
 			h.flags[key] = existing
 		}
 		return

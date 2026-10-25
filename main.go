@@ -174,7 +174,7 @@ func writeJSON(path string, v any) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o644)
+	return writePrivate(path, b)
 }
 
 func printSummary(r *Report) {
