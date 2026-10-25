@@ -81,6 +81,7 @@ func Scan(cfg *Config) (*Report, error) {
 			authRep.Notes = append(authRep.Notes, fmt.Sprintf("anonymous comparison failed: HTTP %d", anonRep.DocumentStatus))
 		} else {
 			authRep.AuthOnlyFlags, authRep.AnonOnlyFlags = diffFlags(documentFlags, anonRep.Flags)
+			authRep.ValueChanges = diffValues(documentFlags, anonRep.Flags)
 			authRep.Notes = append(authRep.Notes, fmt.Sprintf("anon compare: %d auth-only, %d anon-only", len(authRep.AuthOnlyFlags), len(authRep.AnonOnlyFlags)))
 		}
 	}
@@ -105,6 +106,8 @@ func scanOnce(c *httpClient, cfg *Config, doProbe bool) (*Report, error) {
 		pageURL = cfg.URL
 	}
 	scripts := extractScriptSrcs(html, pageURL)
+	endpoints := extractEndpoints(html, "document", pageURL)
+	assets := []Asset{{Source: "document", URL: cfg.URL, FinalURL: final, Status: status}}
 	baseHost := ""
 	if u, err := url.Parse(pageURL); err == nil {
 		baseHost = strings.ToLower(u.Hostname())
@@ -138,6 +141,8 @@ func scanOnce(c *httpClient, cfg *Config, doProbe bool) (*Report, error) {
 		}
 		txt := string(js)
 		harvest(txt, name, acc)
+		endpoints = append(endpoints, extractEndpoints(txt, name, pageURL)...)
+		assets = append(assets, Asset{Source: name, URL: src, FinalURL: finalJS, Status: st})
 		fetched = append(fetched, src)
 		n++
 		// loaders often point at the real bundle (pageJs, import(), webpack)
@@ -161,6 +166,8 @@ func scanOnce(c *httpClient, cfg *Config, doProbe bool) (*Report, error) {
 	host := baseHost
 	rep := &Report{
 		Target:         cfg.URL,
+		Endpoints:      endpoints,
+		Assets:         assets,
 		DocumentStatus: status,
 		Title:          extractTitle(html),
 		FinalURL:       final,

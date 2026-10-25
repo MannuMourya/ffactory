@@ -86,6 +86,7 @@ func extractScriptSrcs(html, pageURL string) []string {
 
 func harvest(text, source string, acc *harvestAcc) {
 	detectPlatformsInText(text, acc)
+	harvestSDKCalls(text, source, acc)
 	acc.addURLs(reAbsURL.FindAllString(text, -1), source)
 	for _, m := range reLDID.FindAllStringSubmatch(text, -1) {
 		acc.addKey("launchdarkly", m[1], source)
@@ -414,22 +415,13 @@ func (h *harvestAcc) addFlag(key, val, source string) {
 
 func (h *harvestAcc) addFlagVal(key, val, source string, on *bool) {
 	key = strings.TrimSpace(key)
-	if len(key) < 3 || len(key) > 80 {
+	if key == "" || len(key) > 256 || (len(key) < 3 && !strings.Contains(source, ":sdk-call:")) {
 		return
 	}
 	if noisyFlag(key) {
 		return
 	}
-	if existing, ok := h.flags[key]; ok {
-		if existing.Value == "" && val != "" {
-			existing.Value = val
-			existing.On = on
-			existing.Source = source
-			h.flags[key] = existing
-		}
-		return
-	}
-	h.flags[key] = Flag{Key: key, Value: val, Source: source, On: on}
+	h.flags[key] = recordFlag(h.flags[key], key, val, source, on)
 }
 
 func (h *harvestAcc) addURLs(urls []string, source string) {

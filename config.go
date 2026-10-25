@@ -59,23 +59,26 @@ func (h *headerList) Set(v string) error {
 }
 
 type Report struct {
-	Target         string      `json:"target"`
-	Authenticated  bool        `json:"authenticated"`
-	DocumentStatus int         `json:"document_status"`
-	Title          string      `json:"title"`
-	FinalURL       string      `json:"final_url"`
-	Platforms      []string    `json:"platforms"`
-	ClientKeys     []ClientKey `json:"client_keys"`
-	EvalURLs       []EvalURL   `json:"eval_urls"`
-	Flags          []Flag      `json:"flags"`
-	SecondaryHosts []string    `json:"secondary_hosts"`
-	ProductNames   []string    `json:"product_names"`
-	JSBundles      []string    `json:"js_bundles"`
-	AuthOnlyFlags  []string    `json:"auth_only_flags,omitempty"`
-	AnonOnlyFlags  []string    `json:"anon_only_flags,omitempty"`
-	ProbeResults   []Probe     `json:"probe_results,omitempty"`
-	Notes          []string    `json:"notes,omitempty"`
-	ScannedAt      time.Time   `json:"scanned_at"`
+	ValueChanges   []ValueChange       `json:"value_changes,omitempty"`
+	Endpoints      []EndpointCandidate `json:"endpoint_candidates,omitempty"`
+	Assets         []Asset             `json:"assets,omitempty"`
+	Target         string              `json:"target"`
+	Authenticated  bool                `json:"authenticated"`
+	DocumentStatus int                 `json:"document_status"`
+	Title          string              `json:"title"`
+	FinalURL       string              `json:"final_url"`
+	Platforms      []string            `json:"platforms"`
+	ClientKeys     []ClientKey         `json:"client_keys"`
+	EvalURLs       []EvalURL           `json:"eval_urls"`
+	Flags          []Flag              `json:"flags"`
+	SecondaryHosts []string            `json:"secondary_hosts"`
+	ProductNames   []string            `json:"product_names"`
+	JSBundles      []string            `json:"js_bundles"`
+	AuthOnlyFlags  []string            `json:"auth_only_flags,omitempty"`
+	AnonOnlyFlags  []string            `json:"anon_only_flags,omitempty"`
+	ProbeResults   []Probe             `json:"probe_results,omitempty"`
+	Notes          []string            `json:"notes,omitempty"`
+	ScannedAt      time.Time           `json:"scanned_at"`
 }
 
 type ClientKey struct {
@@ -91,10 +94,13 @@ type EvalURL struct {
 }
 
 type Flag struct {
-	Key    string `json:"key"`
-	Value  string `json:"value"`
-	Source string `json:"source"`
-	On     *bool  `json:"on,omitempty"`
+	Evidence          []Evidence `json:"evidence,omitempty"`
+	Confidence        string     `json:"confidence,omitempty"`
+	ConflictingValues bool       `json:"conflicting_values,omitempty"`
+	Key               string     `json:"key"`
+	Value             string     `json:"value"`
+	Source            string     `json:"source"`
+	On                *bool      `json:"on,omitempty"`
 }
 
 type Probe struct {

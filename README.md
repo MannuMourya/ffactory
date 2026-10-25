@@ -255,3 +255,48 @@ frontend probing is not implemented. ConfigCat parses v6 `f` settings maps.
 Generic targeting attributes are currently used by GrowthBook and LaunchDarkly;
 other provider targeting support is incomplete. Self-hosted/region-specific APIs
 may need additional endpoint configuration.
+
+## Evidence-driven feature research
+
+The scanner produces discovery leads for investigating hidden functionality,
+plan/role targeting, and client/server authorization boundaries. It does not
+validate vulnerabilities or infer exploitability from client-side configuration.
+
+Reports now include:
+
+- `flags[].evidence`: all distinct observed source/value pairs, classified as
+  SDK call, structured data, provider response, or name heuristic.
+- `flags[].confidence`: confidence in the discovery evidence, **not severity**.
+  Name-only matches are low; SDK-shaped calls are medium; structured data and
+  provider responses are high. Structured data can still be ordinary config.
+- `flags[].conflicting_values`: contradictory observations are retained rather
+  than silently discarded. The legacy `value` is representative, not an effective
+  runtime evaluation. An SDK call's default argument is not treated as its result.
+- `value_changes`: shared keys with different unambiguous observed values between
+  the credentialed and anonymous document/bundle passes. These include boolean
+  and variant changes. Conflicting or unknown values are excluded.
+- `assets`: maps cached source names to requested/final URLs and HTTP status.
+- `endpoint_candidates`: literal fetch, axios method, and XHR-open destinations
+  with source provenance. These are extracted, not requested. Relative HTTP
+  calls resolve against the document URL, as in the browser.
+
+Example:
+
+```bash
+ffactory scan -u https://app.example.com --session own-account.json \
+  --compare-anon --no-probe --cache-dir ./research-cache -o research.json
+jq '.value_changes' research.json
+jq '.flags[] | select(.confidence != "low") | {key, evidence, conflicting_values}' research.json
+jq '.endpoint_candidates, .assets' research.json
+```
+
+Use the source evidence to inspect the surrounding code and establish whether a
+flag actually gates an endpoint or UI route. Endpoint/flag co-occurrence in a
+bundle alone does not establish that relationship. Verify any resulting access
+hypothesis separately with your authorized accounts and the server's responses.
+
+Static analysis limitations: JavaScript is not executed; computed keys, runtime
+imports, template-built endpoints, and dynamically loaded values may be missed.
+SDK-shaped method names can also belong to unrelated objects. Comments and dead
+code can be matched. A difference between passes can reflect experiments, time,
+or personalization rather than a role boundary; repeat before drawing conclusions.
